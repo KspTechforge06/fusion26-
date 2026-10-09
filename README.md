@@ -192,6 +192,24 @@ reflect coordination quality; throughput currently does not.
 - Charging is modelled but not optimised; robots drain at a constant rate.
 - The visualisation does not yet load the MovingAI maps directly, though the
   solver and tests both use them.
+- No trained Graph Neural Network or peer-communication graph exists; coordination
+  is deterministic (reservation table + auction + local replanning). Labelled
+  honestly; GNN integration remains future work.
+
+## Verified commands (this prototype, 2026-10-10)
+
+```bash
+npm ci               # install from package-lock.json
+npm test             # 42 passed, 18 skipped (4 files; ~78–87s)
+npm run typecheck    # clean (tsc --noEmit)
+npm run build        # clean (dist/index.html)
+npm run dev          # http://localhost:5173
+npm run bench        # swarm vs centralized; results in results/
+```
+
+Changes from baseline (d2b49fe): congestion-aware bidding (`src/core/world.ts`);
+selection explanation panel (`src/main.ts`); audit + evidence reports (`reports/`).
+No original source deleted; original remote unchanged.
 
 ## Attribution
 

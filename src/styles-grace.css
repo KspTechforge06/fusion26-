@@ -1,0 +1,17 @@
+/* GRACE-inspired visual direction overlay — applied to existing layout */
+/* Keeps existing responsive grid and component structure; updates palette. */
+:root {
+  --bg: #171918;
+  --panel: #242725;
+  --panel-2: #303532;
+  --line: #3a3f36;
+  --text: #DCE4DC;
+  --muted: #8a9580;
+  --accent: #00BDEB;
+  --danger: #F04424;
+  --magenta: #B34AE0;
+  --yellow: #E6C600;
+  --green: #5D8D5C;
+  --green-highlight: #A8CFA0;
+  color-scheme: dark;
+}

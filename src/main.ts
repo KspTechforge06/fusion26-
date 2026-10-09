@@ -65,7 +65,7 @@ function restart(): void {
   state.selectedRobot = null;
   state.logRendered = 0;
   logEl.replaceChildren();
-  selectionEl.textContent = "Click a robot to inspect it.";
+  selectionEl.textContent = "Click a robot to inspect it.\nUse Play/Step to observe bidding, routing, and fault recovery.";
 
   // Layout may not be resolved on the very first construction, which would leave
   // the canvas with a zero-sized backing store. Measure again once the frame is up.
@@ -167,6 +167,20 @@ function updateSelection(): void {
   const next = robot.committed[0];
   const goal = robot.committed[robot.committed.length - 1];
 
+  // Explanation of decision: why this robot has the task / is rerouting
+  let explanation = "";
+  if (robot.taskId !== null && task) {
+    const score = "(bid score reflects distance, queue depth, priority, battery, congestion)";
+    explanation = `Assigned because best bidder for order ${task.id} (${task.priority}). ${score}`;
+  }
+  if (robot.replanCause) {
+    explanation += ` Replanning due to ${robot.replanCause}.`;
+  } else if (robot.consecutiveWaits >= 4) {
+    explanation += " Waiting: queue or blocked aisle.";
+  } else if (robot.state === "stranded") {
+    explanation += " Stranded: no safe route within horizon.";
+  }
+
   selectionEl.textContent = [
     `robot      R${robot.id}`,
     `state      ${robot.state}`,
@@ -179,6 +193,8 @@ function updateSelection(): void {
     `heading    ${goal ? `${goal.x}, ${goal.y}` : "—"}`,
     `moves      ${robot.moves}   waits ${robot.waitTicks}`,
     `re-plans   ${robot.replans}`,
+    `--- why ---`,
+    explanation,
   ].join("\n");
 }
 

@@ -492,11 +492,16 @@ export class World {
     const dist = fieldDistance(this.grid, field, task.pickup);
     if (!Number.isFinite(dist)) return -Infinity;
 
+    // Congestion factor: estimate congestion at the pickup from current congestion array
+    const pickupCellIdx = (task.pickup.y * this.grid.width + task.pickup.x);
+    const congestionFactor = Math.min(0.3, this.congestion[pickupCellIdx] * 0.05);
+
     return (
       PRIORITY_WEIGHT[task.priority] * 2 -
       dist -
       this.queueDepth(task.pickup) * 6 -
-      (1 - robot.battery) * 30
+      (1 - robot.battery) * 30 -
+      congestionFactor * 20
     );
   }
 
