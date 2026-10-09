@@ -1,0 +1,17 @@
+{
+  "name": "fusion-iot04-warehouse-robot-coordination",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic warehouse robot fleet simulation foundation for FUSION 2K26 IOT-04.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "24.7.2",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}

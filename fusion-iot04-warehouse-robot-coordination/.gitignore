@@ -1,0 +1,29 @@
+# Dependency and build output
+node_modules/
+dist/
+build/
+coverage/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# IDE settings
+.vscode/
+.idea/
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+
+# Temporary and local output
+*.tmp
+*.temp
+*.log
