@@ -15,10 +15,16 @@ export interface WarehouseSpec {
 /**
  * Generates a warehouse with regular racking aisles.
  *
- * Layout: blocks of shelving separated by open aisles. The perimeter is walled,
- * x=1 and x=width-2 are kept clear as perimeter lanes, and each rack band is
- * punched with periodic gaps so the floor stays connected -- an unreachable aisle
- * makes for a useless test, and real warehouses are designed to avoid that too.
+ * Layout, outermost first:
+ *   - a solid perimeter wall;
+ *   - wide service lanes down both sides (laneWidth cells), where the docks and
+ *     packing stations live;
+ *   - racking bands running horizontally between them, separated by cross aisles.
+ *
+ * The side lanes must be more than one cell wide. With a single-cell lane every
+ * robot bound for a dock forms an unpassable queue, and the fleet's throughput ends
+ * up measuring dock logistics rather than coordination -- robots spend their lives
+ * shuffling along a corridor with no way to overtake.
  */
 export function generateWarehouse(options: {
   width?: number;
@@ -28,19 +34,21 @@ export function generateWarehouse(options: {
   rackWidth?: number;
   /** Aisle width in cells. */
   aisleWidth?: number;
+  /** Cells of open service lane down each side. */
+  laneWidth?: number;
   /** Every Nth rack band is omitted, creating a cross-aisle. */
   crossAisleEvery?: number;
 }): WarehouseSpec {
   const {
-    width = 41,
+    width = 51,
     height = 29,
     seed,
     rackWidth = 2,
     aisleWidth = 3,
+    laneWidth = 3,
     crossAisleEvery = 4,
   } = options;
 
-  const rng = new Rng(seed);
   const grid = makeGrid(width, height, 0);
 
   // Start from open floor, then carve shelving out of it.
@@ -48,20 +56,29 @@ export function generateWarehouse(options: {
     for (let x = 0; x < width; x++) grid.cells[idx(grid, x, y)] = 1;
   }
 
+  // Racking occupies only the middle, leaving `laneWidth` cells of service lane on
+  // each side and a cross aisle at the very top and bottom.
+  const rackXFrom = laneWidth + 1;
+  const rackXTo = width - laneWidth - 2;
+  const rackYTo = height - 3;
+
   const band = rackWidth + aisleWidth;
-  const bandsAcross = Math.floor((height - 2) / band);
+  const bandsAcross = Math.floor((rackYTo - 2) / band);
   let rackRow = 0;
 
   for (let b = 0; b < bandsAcross; b++) {
-    const y0 = 1 + b * band;
+    const y0 = 2 + b * band;
     const isCrossAisle = crossAisleEvery > 0 && rackRow % crossAisleEvery === crossAisleEvery - 1;
     rackRow++;
     if (isCrossAisle) continue;
 
-    for (let y = y0; y < y0 + rackWidth && y < height - 1; y++) {
-      for (let x = 2; x < width - 2; x++) {
-        const gap = (y * 7 + x * 13 + seed) % 11 === 0;
-        if (!gap) grid.cells[idx(grid, x, y)] = 0;
+    for (let y = y0; y < y0 + rackWidth && y <= rackYTo; y++) {
+      for (let x = rackXFrom; x <= rackXTo; x++) {
+        // A real integer hash rather than a linear expression: `y*7 + x*13` reduces
+        // to nothing mod 13 in x, which could leave a whole band gap-free and make
+        // two different seeds generate byte-identical warehouses.
+        const h = ((x * 73856093) ^ (y * 19349663) ^ (seed * 83492791)) >>> 0;
+        if (h % 13 !== 0) grid.cells[idx(grid, x, y)] = 0;
       }
     }
   }
@@ -93,32 +110,50 @@ export function generateWarehouse(options: {
   const open = [...freeCells(grid)].filter((p) => component.has(idx(grid, p.x, p.y)));
   if (open.length === 0) throw new Error("generateWarehouse produced no reachable floor");
 
+  // Facilities live on the wide side lanes, which racking never touches. Placing
+  // them with a nearest-open search instead can drop them into a one-cell gap
+  // between shelf blocks -- a dead end that robots drive into, queue inside, and
+  // cannot get out of.
+  const westLane = laneWidth > 1 ? 2 : 1;
+  const eastLane = width - (laneWidth > 1 ? 2 : 1);
+
   const docks: Position[] = [];
-  for (let i = 0; i < 4; i++) {
-    const y = 3 + Math.floor(((height - 6) * i) / 4);
-    const p = nearestOpen(grid, component, { x: 2, y }, open);
-    if (p) docks.push(p);
+  for (let i = 0; i < 8; i++) {
+    const y = 3 + Math.floor(((height - 6) * i) / 8);
+    const p = nearestOpen(grid, component, { x: westLane, y }, open);
+    if (p && !docks.some((d) => d.x === p.x && d.y === p.y)) docks.push(p);
   }
 
+  // Packing is the narrow end of the funnel: every job ends here. Too few stations
+  // and the whole fleet queues on two cells, which measures logistics rather than
+  // coordination.
   const packingStations: Position[] = [];
-  for (let i = 0; i < 2; i++) {
-    const y = 5 + Math.floor(((height - 10) * i) / 2);
-    const p = nearestOpen(grid, component, { x: width - 3, y }, open);
-    if (p) packingStations.push(p);
+  for (let i = 0; i < 5; i++) {
+    const y = 4 + Math.floor(((height - 8) * i) / 5);
+    const p = nearestOpen(grid, component, { x: eastLane, y }, open);
+    if (p && !packingStations.some((s) => s.x === p.x && s.y === p.y)) packingStations.push(p);
   }
 
   const chargers: Position[] = [];
-  for (let i = 0; i < 3; i++) {
-    const x = 6 + Math.floor(((width - 12) * i) / 3);
-    const p = nearestOpen(grid, component, { x, y: height - 2 }, open);
-    if (p) chargers.push(p);
+  for (let i = 0; i < 4; i++) {
+    const p = nearestOpen(grid, component, { x: 1 + (i % 2), y: height - 2 }, open);
+    if (p && !chargers.some((c) => c.x === p.x && c.y === p.y)) chargers.push(p);
   }
 
-  // Spawn robots on the perimeter lanes so none starts inside racking.
-  const parking = open.filter((p) => p.x <= 2 || p.x >= width - 3 || p.y <= 2 || p.y >= height - 3);
-  rng.shuffle(parking);
+  // Robots start in the service lanes. Spreading them over the whole floor looked
+  // more realistic but parked them inside single-cell rack gaps and side aisles
+  // where they immediately wedged.
+  const parking = shuffleInPlace(
+    open.filter((p) => p.x <= laneWidth || p.x >= width - laneWidth - 1),
+    seed,
+  );
 
   return { grid, docks, packingStations, chargers, parking };
+}
+
+/** Deterministic shuffle without threading an Rng instance through the generator. */
+function shuffleInPlace<T>(items: T[], seed: number): T[] {
+  return new Rng(seed).shuffle(items);
 }
 
 function nearestOpen(
@@ -163,10 +198,10 @@ export function createWorld(options: WorldOptions): World {
     robotCount = 12,
     initialTasks = 6,
     horizon = 64,
-    serviceTime = 4,
+    serviceTime = 3,
     commitLength = 18,
-    taskSpawnInterval = 14,
-    taskTimeout = 400,
+    taskSpawnInterval = 26,
+    taskTimeout = 700,
     repairTicks = 90,
   } = options;
 

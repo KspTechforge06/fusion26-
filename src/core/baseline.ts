@@ -53,10 +53,13 @@ export class CentralizedBaseline {
 
   constructor(world: World, options: BaselineOptions = {}) {
     this.world = world;
-    this.replanEvery = options.replanEveryTicks ?? 25;
-    this.horizon = options.horizon ?? 120;
-    this.maxNodes = options.maxNodes ?? 600;
-    this.timeLimitMs = options.timeLimitMs ?? 250;
+    this.replanEvery = options.replanEveryTicks ?? 40;
+    // Generous, on purpose. A baseline that quietly fails to route its own fleet
+    // proves nothing: the comparison is only meaningful if the central controller
+    // is actually capable, so it gets a horizon and node budget that let CBS solve.
+    this.horizon = options.horizon ?? 200;
+    this.maxNodes = options.maxNodes ?? 2_000;
+    this.timeLimitMs = options.timeLimitMs ?? 600;
   }
 
   step(): void {

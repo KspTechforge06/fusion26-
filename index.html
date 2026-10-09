@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Warehouse Swarm — decentralised coordination for robot fleets</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="panel">
+        <header class="panel__head">
+          <h1>Warehouse Swarm</h1>
+          <p class="sub">Decentralised MAPF &middot; no central controller</p>
+        </header>
+
+        <section class="group">
+          <h2>Simulation</h2>
+          <div class="row">
+            <label for="seed">Seed</label>
+            <input id="seed" type="number" value="42" min="1" step="1" />
+          </div>
+          <div class="row">
+            <label for="robots">Robots</label>
+            <input id="robots" type="number" value="14" min="2" max="40" step="1" />
+          </div>
+          <div class="row">
+            <label for="speed">Speed</label>
+            <input id="speed" type="range" min="1" max="40" value="10" />
+            <span id="speedLabel" class="value">10 t/s</span>
+          </div>
+          <div class="row buttons">
+            <button id="restart" class="btn btn--primary">New world</button>
+          </div>
+          <div class="row buttons">
+            <button id="play" class="btn">Pause</button>
+            <button id="step" class="btn">Step 5</button>
+          </div>
+        </section>
+
+        <section class="group">
+          <h2>Fault injection</h2>
+          <p class="hint">Click the grid with a tool armed. Clicking a robot always selects it.</p>
+          <label class="check"><input id="armedBlock" type="radio" name="tool" checked /> Drop shelving</label>
+          <label class="check"><input id="armedKill" type="radio" name="tool" /> Kill robot</label>
+          <label class="check"><input id="armedClear" type="radio" name="tool" /> Clear aisle</label>
+          <div class="row buttons">
+            <button id="injectRush" class="btn">Inject rush order</button>
+          </div>
+          <div class="row buttons">
+            <button id="escalate" class="btn">Escalate selected job</button>
+          </div>
+          <div class="row buttons">
+            <button id="repairAll" class="btn">Repair all wrecks</button>
+          </div>
+          <div class="row">
+            <label for="autoFaults">Auto faults</label>
+            <input id="autoFaults" type="range" min="0" max="100" value="0" />
+            <span id="autoFaultLabel" class="value">off</span>
+          </div>
+        </section>
+
+        <section class="group">
+          <h2>Display</h2>
+          <label class="check"><input id="showTrails" type="checkbox" checked /> Committed routes</label>
+          <label class="check"><input id="showHeatmap" type="checkbox" /> Congestion heatmap</label>
+          <label class="check"><input id="showBattery" type="checkbox" checked /> Battery rings</label>
+        </section>
+      </aside>
+
+      <main class="stage">
+        <canvas id="canvas"></canvas>
+        <div id="tooltip" class="tooltip" hidden></div>
+      </main>
+
+      <aside class="panel panel--right">
+        <section class="group">
+          <h2>Metrics</h2>
+          <dl class="stats" id="stats"></dl>
+        </section>
+
+        <section class="group">
+          <h2>Re-plan causes</h2>
+          <dl class="stats stats--tight" id="causes"></dl>
+        </section>
+
+        <section class="group">
+          <h2>Selection</h2>
+          <div id="selection" class="selection">Click a robot to inspect it.</div>
+        </section>
+
+        <section class="group group--grow">
+          <h2>Event log</h2>
+          <ol class="log" id="log"></ol>
+        </section>
+
+        <section class="group">
+          <h2>Legend</h2>
+          <ul class="legend">
+            <li><i style="background:#38bdf8"></i> moving</li>
+            <li><i style="background:#fbbf24"></i> picking up</li>
+            <li><i style="background:#a78bfa"></i> delivering</li>
+            <li><i style="background:#64748b"></i> idle</li>
+            <li><i style="background:#22c55e"></i> charging</li>
+            <li><i style="background:#f97316"></i> stranded</li>
+            <li><i style="background:#ef4444"></i> failed</li>
+            <li><i style="background:#2563eb"></i> dock</li>
+            <li><i style="background:#059669"></i> packing</li>
+            <li><i style="background:#eab308"></i> charger</li>
+          </ul>
+        </section>
+
+        <p class="hint shortcuts">
+          space play/pause &middot; . step &middot; b shelving &middot; k kill &middot; esc deselect
+        </p>
+      </aside>
+    </div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

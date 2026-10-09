@@ -21,6 +21,13 @@ import type {
  * and for spotting standoffs; it deliberately does not by itself trigger a
  * re-plan, because ordinary queueing behind a slow robot is not a deadlock.
  */
+/**
+ * How long a robot must sit still before the robots behind it treat it as stalled
+ * rather than merely slow. Queueing is the common case in a warehouse aisle and
+ * must not be reported, or re-planned, as a deadlock.
+ */
+const STALLED_WAIT_LIMIT = 4;
+
 export interface Robot {
   id: number;
   x: number;
@@ -727,14 +734,12 @@ export class World {
       intents.set(robot.id, next);
     }
 
-    // 2. Resolve in two phases so that "the occupant is leaving" is only ever
-    //    assumed once it has actually been confirmed.
+    // 2. Resolve.
     //
-    //    Phase A: robots that are staying put claim their cells first. Nothing may
-    //    enter a cell a stayer occupies.
+    //    Phase A -- stayers claim their cells first, so nothing may enter a cell a
+    //    stayer occupies.
     const accepted = new Map<number, Position>();
-    const claimed: Position[] = [];
-    const isClaimed = (x: number, y: number) => claimed.some((p) => p.x === x && p.y === y);
+    let claimed = new Set<number>();
 
     for (const id of [...intents.keys()].sort((a, b) => a - b)) {
       const robot = this.robots[id];
@@ -742,38 +747,56 @@ export class World {
       if (next.x !== robot.x || next.y !== robot.y) continue;
 
       accepted.set(id, next);
-      claimed.push(next);
+      claimed = new Set(claimed).add(this.codec.cell(next.x, next.y));
     }
 
-    // Phase B: robots that intend to move, lowest id first.
-    for (const id of [...intents.keys()].sort((a, b) => a - b)) {
-      const robot = this.robots[id];
-      const next = intents.get(id)!;
+    const movers = [...intents.keys()].filter((id) => !accepted.has(id)).sort((a, b) => a - b);
 
-      if (accepted.has(id)) continue; // already placed in phase A
+    // Phase B -- movers are accepted optimistically, then verified. A move is only
+    // safe if the robot currently occupying its destination is itself leaving, and
+    // is not leaving into our own cell (a head-on swap). Verifying after the fact
+    // lets whole chains move together: A may follow B into the cell B is vacating
+    // even when B has a higher id, which a strict in-order check would forbid and
+    // which serialised the entire fleet into a queue.
+    for (let round = 0; round <= movers.length + 1; round++) {
+      const tentative = new Map(accepted);
+      const taken = new Set(claimed);
 
-      if (isClaimed(next.x, next.y)) continue;
+      for (const id of movers) {
+        const next = intents.get(id)!;
+        const cell = this.codec.cell(next.x, next.y);
+        if (taken.has(cell)) continue;
+        tentative.set(id, next);
+        taken.add(cell);
+      }
 
-      const occupantId = this.occupancy.get(this.codec.cell(next.x, next.y));
-      if (occupantId !== undefined && occupantId !== id) {
-        // Only enter a cell whose occupant has *already* been accepted to leave.
-        // Assuming they will move, without knowing whether their own move survives
-        // resolution, is how two robots end up in the same square.
-        if (!accepted.has(occupantId)) {
+      let removed = false;
+
+      for (const id of movers) {
+        if (!tentative.has(id)) continue;
+
+        const robot = this.robots[id];
+        const next = tentative.get(id)!;
+        const occupantId = this.occupancy.get(this.codec.cell(next.x, next.y));
+        if (occupantId === undefined || occupantId === id) continue;
+
+        const occupantNext = tentative.get(occupantId);
+
+        // The occupant is staying put, or is leaving into our own cell.
+        if (occupantNext === undefined ||
+            (occupantNext.x === robot.x && occupantNext.y === robot.y)) {
+          tentative.delete(id);
+          removed = true;
           this.noteBlocked(robot, occupantId, willMove);
-          continue;
-        }
-
-        const occupantNext = accepted.get(occupantId)!;
-        // Refuse if they are leaving into our own cell: that is a head-on swap.
-        if (occupantNext.x === robot.x && occupantNext.y === robot.y) {
-          this.noteBlocked(robot, occupantId, willMove);
-          continue;
         }
       }
 
-      accepted.set(id, next);
-      claimed.push(next);
+      accepted.clear();
+      for (const [k, v] of tentative) accepted.set(k, v);
+      claimed = taken;
+
+      // Stable: no move depended on another that has now been withdrawn.
+      if (!removed) break;
     }
 
     // 3. Apply, then rebuild occupancy from scratch so the map can never drift out
@@ -825,10 +848,12 @@ export class World {
       blocker.state === "charging" ||
       blocker.committed.length === 0;
 
-    // The blocker is neither moving nor legitimately busy, so both sides are
-    // waiting on each other. Queueing behind a robot that is loading, unloading or
-    // charging is normal and must never trip this.
+    // The blocker is neither moving nor legitimately busy. Queueing behind a robot
+    // that is loading, unloading or charging is normal and must never trip this;
+    // nor is queueing behind one that is merely stepping aside for a moment, which
+    // is what `consecutiveWaits` distinguishes.
     if (willMove.has(occupantId) || blockerBusy) return;
+    if (blocker.consecutiveWaits < STALLED_WAIT_LIMIT) return;
 
     // Deterministic tie-break: the higher id yields. Both then re-plan with fresh
     // information, and the exchange rule keeps them from meeting again.
@@ -837,6 +862,7 @@ export class World {
       robot.replanCause = "deadlock";
       robot.consecutiveWaits = 0;
       this.metrics.deadlocks++;
+      this.metrics.deadlockTicks += blocker.consecutiveWaits;
       this.addLog(robot.id, "deadlock", `R${robot.id} yields to stalled R${occupantId}`);
     }
   }

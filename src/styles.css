@@ -1,0 +1,202 @@
+:root {
+  --bg: #020617;
+  --panel: #0b1220;
+  --panel-2: #111a2e;
+  --line: #1e293b;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #38bdf8;
+  --danger: #ef4444;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.app {
+  display: grid;
+  /* The panels are the first thing to give way: fixed 260px + 310px columns leave
+     the stage with nothing once the viewport drops under ~900px, which is what
+     makes the canvas look blank. `minmax` floors keep the stage usable and the
+     panel columns are capped so they shrink before the map does. */
+  grid-template-columns: minmax(200px, 260px) minmax(320px, 1fr) minmax(220px, 310px);
+  /* vh as well as 100%: a percentage height chain is fragile, and a stage that
+     collapses to zero height is what leaves the canvas rendering nothing. */
+  height: 100vh;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Below the three-column floor, drop to a stacked layout with the stage on top. */
+@media (max-width: 780px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(240px, 45vh) auto auto;
+    height: auto;
+    min-height: 100vh;
+  }
+  .stage { order: -1; }
+  .panel { border: none; border-top: 1px solid var(--line); overflow-y: visible; }
+  .panel--right { border-left: none; }
+  .log { max-height: 40vh; }
+}
+
+.panel {
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.panel--right { border-right: none; border-left: 1px solid var(--line); }
+
+.panel__head h1 { margin: 0; font-size: 16px; letter-spacing: 0.2px; }
+.sub { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+
+.group { display: flex; flex-direction: column; gap: 8px; }
+.group--grow { flex: 1; min-height: 120px; }
+
+.group h2 {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.row { display: flex; align-items: center; gap: 8px; }
+.row label { flex: 0 0 74px; color: var(--muted); }
+.row.buttons { flex-wrap: wrap; gap: 6px; }
+
+.hint { margin: 0; color: var(--muted); font-size: 11px; }
+.shortcuts { opacity: 0.7; font-family: ui-monospace, monospace; }
+
+input[type="number"] {
+  flex: 1; min-width: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 7px;
+  font: inherit;
+}
+
+input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+
+.value {
+  flex: 0 0 54px;
+  text-align: right;
+  color: var(--accent);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.btn {
+  flex: 1 1 auto;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms;
+}
+.btn:hover { border-color: var(--accent); background: #16213a; }
+.btn:active { transform: translateY(1px); }
+.btn--primary { background: #0e3a5c; border-color: #1d6fa5; }
+
+.check { display: flex; align-items: center; gap: 7px; cursor: pointer; color: var(--muted); }
+.check input { accent-color: var(--accent); }
+
+.stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: #020617;
+}
+#canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
+
+.tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(2, 6, 23, 0.95);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  white-space: pre;
+  z-index: 5;
+}
+
+.stats {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 10px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.stats dt { color: var(--muted); }
+.stats dd { margin: 0; text-align: right; }
+.stats--tight { font-size: 11px; }
+
+.selection {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.log {
+  list-style: none;
+  margin: 0; padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.log li {
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+}
+.log li b { color: var(--text); font-weight: 600; }
+.log li.k-robot-failed, .log li.k-cell-blocked { border-left-color: var(--danger); }
+.log li.k-priority-change, .log li.k-task-delivered { border-left-color: #a78bfa; }
+.log li.k-task-claimed { border-left-color: var(--accent); }
+.log li.k-deadlock { border-left-color: #f97316; }
+
+.legend {
+  list-style: none;
+  margin: 0; padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.legend li { display: flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
