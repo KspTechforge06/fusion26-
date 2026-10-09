@@ -79,6 +79,23 @@
 #define TEMP_MIN 18.0f
 #define TEMP_MAX 32.0f
 
+/* ---- Traffic / link statistics ---- */
+#define LINK_HISTORY 32       /* seconds of packet-rate history (sparkline)  */
+#define LINK_RATE_ALPHA 0.35f /* EMA weight for per-robot Hz                 */
+#define LINK_BUCKET_MS 1000   /* rate bucket width                           */
+#define LINK_GAP_MAX 1000     /* ignore sequence jumps larger than this      */
+#define LED_PULSE_MS 6        /* RX-activity blink on the on-board LED       */
+
+/* ---- Web feed (warehouse-swarm -> node over USB serial) ---- */
+/*
+ * The web dashboard (../../) streams its synthetic fleet state to this node as
+ * "WB,..." / "WR,..." / "WE" text lines. That feed is independent of ESP-NOW:
+ * the same board can show a live web simulation and a real ESP-NOW fleet.
+ */
+#define WEB_MAX_ROBOTS 40   /* warehouse-swarm robot cap                      */
+#define WEB_STALE_MS 1500   /* feed older than this = link down               */
+#define WEB_LINE_LEN 160    /* one serial line (WB/R/WE)                      */
+
 /* ---- UI ---- */
 #define EVENT_LOG_SIZE 6
 #define EVENT_TEXT_LEN 18

@@ -193,7 +193,7 @@ call it a *trained deployed GNN* once that passes.
 | `esp_now_init_failed` | another Wi-Fi mode is active; reflash and reboot |
 | One board dominates | its `pri` is too high; reset priorities or raise others |
 
-## 9. Mapping to the SIH/guide requirements
+## 9. Requirement mapping
 
 | Requirement | Where |
 |---|---|

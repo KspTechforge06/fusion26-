@@ -61,6 +61,19 @@
         </section>
 
         <section class="group">
+          <h2>ESP link</h2>
+          <p class="hint">
+            Stream this simulation to an ESP8266 OLED node over USB serial
+            (Web Serial, Chrome/Edge on localhost).
+          </p>
+          <div class="row buttons">
+            <button id="espConnect" class="btn btn--primary">Connect ESP</button>
+            <button id="espDisconnect" class="btn">Disconnect</button>
+          </div>
+          <p id="espStatus" class="hint">not connected</p>
+        </section>
+
+        <section class="group">
           <h2>Display</h2>
           <label class="check"><input id="showTrails" type="checkbox" checked /> Committed routes</label>
           <label class="check"><input id="showHeatmap" type="checkbox" /> Congestion heatmap</label>

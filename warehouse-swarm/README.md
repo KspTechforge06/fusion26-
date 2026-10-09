@@ -31,6 +31,21 @@ failures, and re-plan individually when the world changes under them.
 
 ---
 
+## ESP link (stream to the OLED node)
+
+The simulation can stream itself to the ESP8266 OLED dashboard node over USB
+serial — no server needed. The node renders the fleet on its **WEB / WROB**
+OLED pages (see [`esp8266-dashboard/README.md`](esp8266-dashboard/README.md)).
+
+1. `npm run dev` (or serve the built page from `localhost`).
+2. Click **Connect ESP** (Chrome/Edge; Web Serial needs a secure context).
+3. Pick the NodeMCU's USB-serial port — it starts streaming ~4 frames/s.
+
+The node's own ESP-NOW telemetry keeps printing on the same port; the browser
+drains it. The wire format and OLED wiring are in the node's README.
+
+---
+
 ## Architecture
 
 ```

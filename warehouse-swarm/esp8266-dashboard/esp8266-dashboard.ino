@@ -7,10 +7,16 @@
  * and falls back to local random / tick readings when no robots are heard.
  *
  * Pages (NEXT button cycles):
- *   0 FLEET    - live robots: id, position, battery, status
- *   1 ROBOT    - one robot's detail (auto round-robin, or `sel <id>`)
+ *   0 FLEET    - ESP-NOW robots: id, position, battery, status
+ *   1 ROBOT    - one ESP-NOW robot's detail (auto round-robin, or `sel <id>`)
  *   2 READINGS - tick, random walk, raw random, temp, load, A0, counters
- *   3 EVENTS   - rolling log of button / serial events
+ *   3 LINK     - ESP-NOW transmission / loss stats + traffic sparkline
+ *   4 EVENTS   - rolling log of button / serial events
+ *   5 WEB      - fleet streamed from the warehouse-swarm web dashboard
+ *   6 WROB     - detail of one web robot
+ *
+ * The node reads the warehouse-swarm web dashboard over the same USB serial
+ * (WB/WR/WE text frames); that synthetic fleet is shown on pages 5-6.
  *
  * Buttons (active LOW to GND):
  *   NEXT  D5  - change page
@@ -52,12 +58,15 @@ static uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 static Adafruit_SSD1306 display(OLED_W, OLED_H, &Wire, -1);
 static bool       gOledOk = false;
 
-static FleetView gFleet;
-static Readings  gReadings;
-static EventLog  gEventLog;
+static FleetView  gFleet;
+static Readings   gReadings;
+static LinkTotals gLink;
+static WebFeed    gWeb;
+static EventLog   gEventLog;
 
 static int  gPage        = PAGE_FLEET;
 static int  gSelectedId  = 0;
+static uint16_t gWebScroll = 0; /* WEB page robot-list scroll offset */
 static uint16_t gBeaconSeq = 0;
 static bool gSendBeaconNow = false;
 
@@ -75,6 +84,9 @@ static const uint8_t RX_QUEUE_SIZE = 8;
 static RobotPacket   gRxQueue[RX_QUEUE_SIZE];
 static volatile uint8_t gRxHead = 0;
 static volatile uint8_t gRxTail = 0;
+static volatile uint32_t gRxBadLen = 0;  /* wrong-length frames            */
+static volatile uint32_t gRxDropped = 0; /* RX queue overflow              */
+static uint32_t gLastRxMs = 0;           /* last accepted packet (LED cue) */
 
 /* buttons */
 struct Button {
@@ -125,9 +137,15 @@ static void onDataSent(uint8_t *mac, uint8_t status) {
 /* Keep minimal: queue only. No Serial / drawing in the callback. */
 static void onDataRecv(uint8_t *mac, uint8_t *data, uint8_t len) {
   (void)mac;
-  if (len != sizeof(RobotPacket)) return;
+  if (len != sizeof(RobotPacket)) {
+    ++gRxBadLen;
+    return;
+  }
   uint8_t next = (uint8_t)((gRxHead + 1) % RX_QUEUE_SIZE);
-  if (next == gRxTail) return; /* full: drop */
+  if (next == gRxTail) { /* full: drop */
+    ++gRxDropped;
+    return;
+  }
   memcpy(&gRxQueue[gRxHead], data, sizeof(RobotPacket));
   gRxHead = next;
 }
@@ -151,12 +169,111 @@ static void setupRadio() {
 }
 
 static void drainRxQueue(uint32_t now) {
+  if (gRxBadLen) {
+    gLink.badLen += gRxBadLen;
+    gRxBadLen = 0;
+  }
+  if (gRxDropped) {
+    gLink.dropped += gRxDropped;
+    gRxDropped = 0;
+  }
   while (gRxTail != gRxHead) {
     RobotPacket p;
     memcpy(&p, &gRxQueue[gRxTail], sizeof(RobotPacket));
     gRxTail = (uint8_t)((gRxTail + 1) % RX_QUEUE_SIZE);
-    gFleet.update(p, now);
+    switch (gFleet.update(p, now)) {
+      case UPDATE_OK:
+        gLink.accept();
+        gLastRxMs = now;
+        break;
+      case UPDATE_STALE:
+        ++gLink.stale;
+        break;
+      case UPDATE_BAD_VERSION:
+        ++gLink.badVersion;
+        break;
+      case UPDATE_BAD_ID:
+        ++gLink.badId;
+        break;
+    }
   }
+}
+
+/* ------------------------- web link (USB serial) ------------------------ */
+
+/*
+ * warehouse-swarm streams its synthetic fleet as text frames over the same USB
+ * serial port used for telemetry. Lines beginning WB/WR/WE are that feed; every
+ * other line is treated as a console command.
+ */
+static char     gWebLine[WEB_LINE_LEN];
+static uint16_t gWebLineLen = 0;
+
+static void webCommit(uint32_t now) {
+  /* Any robot not present in this frame has left the fleet. */
+  for (int i = 0; i < WEB_MAX_ROBOTS; ++i) {
+    WebRobot &r = gWeb.robots[i];
+    if (r.seen && r.frameStamp != gWeb.frameStamp) r.seen = false;
+  }
+  uint32_t dt = now - gWeb.lastFrameMs;
+  if (gWeb.lastFrameMs != 0 && dt > 0) {
+    float inst = 1000.0f / (float)dt;
+    gWeb.frameHz = gWeb.frameHz * 0.6f + inst * 0.4f;
+  }
+  gWeb.lastFrameMs = now;
+  gWeb.active = true;
+  ++gWeb.frames;
+  gLastRxMs = now; /* share the RX-activity LED with the web link */
+
+  if (gWeb.frames == 1) {
+    gEventLog.add(now, "WEB link");
+    if (gPage == PAGE_FLEET) gPage = PAGE_WEB; /* surface the feed */
+  }
+}
+
+static void webParseLine(const char *line, uint32_t now) {
+  if (line[1] == 'B') { /* WB,<summary> */
+    ++gWeb.frameStamp;
+    unsigned long t, n, done, tot, thr, dl, w, act;
+    if (sscanf(line + 3,
+               "t=%lu,n=%lu,done=%lu,tot=%lu,thr=%lu,dl=%lu,w=%lu,act=%lu", &t,
+               &n, &done, &tot, &thr, &dl, &w, &act) == 8) {
+      gWeb.tick = (uint32_t)t;
+      gWeb.count = (uint16_t)n;
+      gWeb.done = (uint32_t)done;
+      gWeb.total = (uint32_t)tot;
+      gWeb.throughputX100 = (uint16_t)thr;
+      gWeb.deadlocks = (uint16_t)dl;
+      gWeb.waitTicks = (uint32_t)w;
+      gWeb.activeRobots = (uint16_t)act;
+    }
+  } else if (line[1] == 'R') { /* WR,<robot> */
+    int id, x, y, b, st, task, stage, mv, wt, rp;
+    if (sscanf(line + 3, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", &id, &x, &y, &b, &st,
+               &task, &stage, &mv, &wt, &rp) == 10 &&
+        id >= 0 && id < WEB_MAX_ROBOTS) {
+      WebRobot &r = gWeb.robots[id];
+      r.seen = true;
+      r.frameStamp = gWeb.frameStamp;
+      r.x = (int16_t)x;
+      r.y = (int16_t)y;
+      r.battery = (uint8_t)b;
+      r.state = (uint8_t)st;
+      r.task = (int16_t)task;
+      r.stage = (int8_t)stage;
+      r.moves = (uint16_t)mv;
+      r.waits = (uint16_t)wt;
+      r.replans = (uint16_t)rp;
+    }
+  } else if (line[1] == 'E') { /* WE */
+    webCommit(now);
+  }
+}
+
+/* True when a line is part of the web feed (WB/WR/WE), not a command. */
+static inline bool isWebLine(const char *line) {
+  return line[0] == 'W' && (line[2] == ',' || line[2] == '\0') &&
+         (line[1] == 'B' || line[1] == 'R' || line[1] == 'E');
 }
 
 /* Dashboard announces itself / button events on the shared channel. */
@@ -190,6 +307,7 @@ static void broadcastBeacon(uint32_t now) {
 
 static void updateReadings(uint32_t now) {
   gReadings.tick = now / 1000;
+  gLink.tick(now);
   if ((uint32_t)(now - gLastReadMs) < READING_STEP_MS) return;
   gLastReadMs = now;
   gReadings.step();
@@ -253,12 +371,30 @@ static void printTelemetry(uint32_t now) {
 
   Serial.printf(
       "DASH,tick=%lu,fleet=%d,sel=%d,page=%s,rnd=%d,raw=%u,temp=%.1f,"
-      "load=%u,a0=%u,trig=%u,fail=%u,heap=%u,simfail=%d\n",
+      "load=%u,a0=%u,trig=%u,fail=%u,heap=%u,simfail=%d,"
+      "rx=%lu,rxps=%.1f,ftick=%lu\n",
       (unsigned long)gReadings.tick, gFleet.freshCount(now), gSelectedId,
       pageName(gPage), (int)gReadings.randWalk, (unsigned)gReadings.rnd,
       gReadings.tempC, (unsigned)gReadings.load, (unsigned)gReadings.a0,
       (unsigned)gReadings.triggers, (unsigned)gReadings.failures,
-      (unsigned)ESP.getFreeHeap(), simFailActive(now) ? gSimFailTarget : 0);
+      (unsigned)ESP.getFreeHeap(), simFailActive(now) ? gSimFailTarget : 0,
+      (unsigned long)gLink.rx, gLink.rxPerSec, (unsigned long)gLink.fleetTick);
+
+  /* transmission summary, one line per second */
+  Serial.printf(
+      "LINK,rx=%lu,rxps=%.1f,peak=%u,drop=%lu,stale=%lu,badver=%lu,badid=%lu,"
+      "badlen=%lu,ftick=%lu\n",
+      (unsigned long)gLink.rx, gLink.rxPerSec, (unsigned)gLink.peakPerSec,
+      (unsigned long)gLink.dropped, (unsigned long)gLink.stale,
+      (unsigned long)gLink.badVersion, (unsigned long)gLink.badId,
+      (unsigned long)gLink.badLen, (unsigned long)gLink.fleetTick);
+
+  /* web link summary, once per second */
+  Serial.printf(
+      "WEBLINK,active=%d,frames=%lu,hz=%.1f,age=%lu,tick=%lu,robots=%u,sel=%d\n",
+      gWeb.active ? 1 : 0, (unsigned long)gWeb.frames, gWeb.frameHz,
+      gWeb.active ? (unsigned long)((now - gWeb.lastFrameMs) / 1000) : 0UL,
+      (unsigned long)gWeb.tick, (unsigned)gWeb.seenCount(), gSelectedId);
 }
 
 static void printInfo() {
@@ -270,8 +406,50 @@ static void printInfo() {
                 PIN_SDA, PIN_SCL, PIN_BTN_NEXT, PIN_BTN_TRIG, PIN_BTN_FAIL);
 }
 
+static void printLink() {
+  Serial.printf(
+      "LINKTOTAL,rx=%lu,rxps=%.1f,peak=%u,drop=%lu,stale=%lu,badver=%lu,"
+      "badid=%lu,badlen=%lu,ftick=%lu\n",
+      (unsigned long)gLink.rx, gLink.rxPerSec, (unsigned)gLink.peakPerSec,
+      (unsigned long)gLink.dropped, (unsigned long)gLink.stale,
+      (unsigned long)gLink.badVersion, (unsigned long)gLink.badId,
+      (unsigned long)gLink.badLen, (unsigned long)gLink.fleetTick);
+  uint32_t now = millis();
+  for (int id = 1; id < FleetView::SIZE; ++id) {
+    RobotView &r = gFleet.robots[id];
+    if (!r.seen) continue;
+    Serial.printf("LINK,%u,pkts=%lu,hz=%.1f,gaps=%lu,age=%lu,fresh=%d\n",
+                  (unsigned)id, (unsigned long)r.packets, r.hz,
+                  (unsigned long)r.gaps,
+                  (unsigned long)((now - r.lastSeenMs) / 1000),
+                  gFleet.isFresh(r, now) ? 1 : 0);
+  }
+}
+
+static void printWeb() {
+  uint32_t now = millis();
+  Serial.printf(
+      "WEB,active=%d,frames=%lu,hz=%.1f,age=%lu,tick=%lu,count=%u,act=%u,"
+      "done=%lu,total=%lu,thr=%u,dl=%u,wait=%lu\n",
+      gWeb.active ? 1 : 0, (unsigned long)gWeb.frames, gWeb.frameHz,
+      gWeb.active ? (unsigned long)((now - gWeb.lastFrameMs) / 1000) : 0UL,
+      (unsigned long)gWeb.tick, (unsigned)gWeb.count,
+      (unsigned)gWeb.activeRobots, (unsigned long)gWeb.done,
+      (unsigned long)gWeb.total, (unsigned)gWeb.throughputX100,
+      (unsigned)gWeb.deadlocks, (unsigned long)gWeb.waitTicks);
+  for (int i = 0; i < WEB_MAX_ROBOTS; ++i) {
+    WebRobot &r = gWeb.robots[i];
+    if (!r.seen) continue;
+    Serial.printf("WROBOT,%d,%d,%d,%u,%u,%d,%d,%u,%u,%u\n", i, (int)r.x, (int)r.y,
+                  (unsigned)r.battery, (unsigned)r.state, (int)r.task,
+                  (int)r.stage, (unsigned)r.moves, (unsigned)r.waits,
+                  (unsigned)r.replans);
+  }
+}
+
 static void printHelp() {
-  Serial.println(F("CMDS: next | page <n> | sel <id> | trig | fail | list | info | reset | help"));
+  Serial.println(F(
+      "CMDS: next | page <n> | sel <id> | trig | fail | list | link | web | info | reset | help"));
 }
 
 static void printList(uint32_t now) {
@@ -280,16 +458,17 @@ static void printList(uint32_t now) {
   for (int id = 1; id < FleetView::SIZE; ++id) {
     RobotView &r = gFleet.robots[id];
     if (!gFleet.isFresh(r, now)) continue;
-    Serial.printf("ROBOT,%u,%d,%d,%d,%d,%u,%u,%u,%u,%lu\n", (unsigned)id, (int)r.x,
-                  (int)r.y, (int)r.goalX, (int)r.goalY, (unsigned)r.batteryPercent,
-                  (unsigned)r.priority, (unsigned)r.status, (unsigned)r.nextAction,
-                  (unsigned long)(now - r.lastSeenMs));
+    Serial.printf(
+        "ROBOT,%u,%d,%d,%d,%d,%u,%u,%u,%u,%lu,pkts=%lu,hz=%.1f,gaps=%lu\n",
+        (unsigned)id, (int)r.x, (int)r.y, (int)r.goalX, (int)r.goalY,
+        (unsigned)r.batteryPercent, (unsigned)r.priority, (unsigned)r.status,
+        (unsigned)r.nextAction, (unsigned long)(now - r.lastSeenMs),
+        (unsigned long)r.packets, r.hz, (unsigned long)r.gaps);
   }
 }
 
-static void handleSerial(uint32_t now) {
-  if (!Serial.available()) return;
-  String line = Serial.readStringUntil('\n');
+static void handleCommand(const char *rawLine, uint32_t now) {
+  String line(rawLine);
   line.trim();
   if (line.length() == 0) return;
 
@@ -305,7 +484,8 @@ static void handleSerial(uint32_t now) {
     }
   } else if (line.startsWith("sel")) {
     int id = -1;
-    if (sscanf(line.c_str(), "sel %d", &id) == 1 && id >= 0 && id <= MAX_ROBOT_ID) {
+    if (sscanf(line.c_str(), "sel %d", &id) == 1 && id >= 0 &&
+        id < WEB_MAX_ROBOTS) {
       gSelectedId = id;
       Serial.printf("EVENT,sel=%d\n", id);
     } else {
@@ -317,6 +497,10 @@ static void handleSerial(uint32_t now) {
     actFail(now);
   } else if (line == "list") {
     printList(now);
+  } else if (line == "link") {
+    printLink();
+  } else if (line == "web") {
+    printWeb();
   } else if (line == "info") {
     printInfo();
   } else if (line == "reset") {
@@ -325,11 +509,43 @@ static void handleSerial(uint32_t now) {
     gSimFailUntil = 0;
     gSimFailTarget = 0;
     gEventLog = EventLog();
+    gLink = LinkTotals();
+    gWeb.reset();
+    gWebScroll = 0;
+    gRxBadLen = 0;
+    gRxDropped = 0;
     Serial.println(F("EVENT,reset"));
   } else if (line == "help") {
     printHelp();
   } else {
     Serial.println(F("ERR,unknown_command"));
+  }
+}
+
+/*
+ * Read whatever is waiting on USB serial and route each complete line: web feed
+ * lines go to the parser, everything else to the command handler. A per-call
+ * budget keeps drawing/telemetry responsive under a busy feed.
+ */
+static void pollSerial(uint32_t now) {
+  int budget = 48;
+  while (Serial.available() && budget-- > 0) {
+    char c = (char)Serial.read();
+    if (c == '\r') continue;
+    if (c == '\n') {
+      if (gWebLineLen > 0) {
+        gWebLine[gWebLineLen] = '\0';
+        if (isWebLine(gWebLine))
+          webParseLine(gWebLine, now);
+        else
+          handleCommand(gWebLine, now);
+      }
+      gWebLineLen = 0;
+    } else if (gWebLineLen < WEB_LINE_LEN - 1) {
+      gWebLine[gWebLineLen++] = c;
+    } else {
+      gWebLineLen = 0; /* overflow: drop the over-long line */
+    }
   }
 }
 
@@ -340,9 +556,14 @@ static void refreshOled(uint32_t now) {
   if ((uint32_t)(now - gLastOledMs) < OLED_REFRESH_MS) return;
   gLastOledMs = now;
 
-  if (gSelectedId == 0) gSelectedId = gFleet.firstFresh(now);
-  renderDashboard(display, gPage, gFleet, gReadings, gEventLog, now, gSelectedId,
-                  gSimFailTarget, simFailActive(now));
+  /* ESP-NOW pages auto-pick a robot; the web pages keep the chosen id (web ids
+   * are 0-based, so 0 is a valid robot there). */
+  if (gPage != PAGE_WEB && gPage != PAGE_WROB && gSelectedId == 0)
+    gSelectedId = gFleet.firstFresh(now);
+  if (gPage == PAGE_WEB) gWebScroll = (uint16_t)(gWebScroll + 3);
+
+  renderDashboard(display, gPage, gFleet, gReadings, gLink, gWeb, gEventLog, now,
+                  gSelectedId, gSimFailTarget, simFailActive(now), gWebScroll);
 }
 
 /* -------------------------------- setup --------------------------------- */
@@ -362,6 +583,7 @@ static void showSplash() {
 }
 
 void setup() {
+  Serial.setRxBufferSize(1024); /* a web frame can be ~1.5 KB at 115200 */
   Serial.begin(115200);
   delay(200);
 
@@ -409,7 +631,7 @@ void loop() {
   uint32_t now = millis();
 
   handleButtons(now);
-  handleSerial(now);
+  pollSerial(now);
   drainRxQueue(now);
   updateReadings(now);
 
@@ -423,6 +645,10 @@ void loop() {
   broadcastBeacon(now);
   refreshOled(now);
   printTelemetry(now);
+
+  /* RX activity indicator: brief pulse on the on-board LED per packet. */
+  digitalWrite(LED_BUILTIN,
+               ((uint32_t)(now - gLastRxMs) < LED_PULSE_MS) ? LOW : HIGH);
 
   delay(LOOP_TICK_MS);
 }

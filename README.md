@@ -1,8 +1,7 @@
 # FUSION26 — Edge-AI Distributed Fleet Coordination for Warehouse AMRs
 
-**SIH 2026 · Problem Statement ID 26123**
-*Edge-AI Based Distributed Fleet Coordination for Autonomous Mobile Robots in smart warehouses.*
-Theme: Smart Automation · Category: Software · Benchmark: [MovingAI MAPF](https://movingai.com/benchmarks/mapf.html)
+A hardware + software lab for decentralized warehouse AMR fleets.
+Benchmark: [MovingAI MAPF](https://movingai.com/benchmarks/mapf.html)
 
 A decentralized warehouse robot fleet. **One ESP8266 = one robot.** Each board
 senses, decides, and talks to its neighbors over ESP-NOW — there is **no central
@@ -15,8 +14,10 @@ fails, a path congests, or priorities change.
 
 | Path | What it is |
 |---|---|
-| **`guide.md`** | **Read this first.** The problem brief: what SIH 26123 asks for, the three disruption triggers (congestion, failure, priority change), what "decentralized" really means, the evaluation focus, metrics, and milestones. |
+| **`guide.md`** | External problem brief used as reference context: the three disruption triggers (congestion, failure, priority change), what "decentralized" really means, the evaluation focus, metrics, and milestones. The project stands on its own. |
 | **`esp8266/`** | The uploadable firmware for the ESP8266 boards (ESP-NOW + tiny GNN). See the table below. |
+| **`warehouse-swarm/`** | The web dashboard: a browser MAPF simulation of decentralized coordination (faults, priority, metrics). It can stream its fleet to the OLED node over USB serial (Web Serial). |
+| **`warehouse-swarm/esp8266-dashboard/`** | The OLED dashboard node: ESP-NOW observer **and** web-feed display on a 128×64 SSD1306 (pages FLEET / ROBOT / READINGS / LINK / EVENTS / WEB / WROB). |
 | **`ESP8266_ESP_NOW_Tiny_GNN_Warehouse_AMR_Guide.md`** | Full design rationale, training plan, protocol details, and test metrics for the firmware. |
 | **`maps/`** | The 33 MovingAI octile-format benchmark maps + an `audit ` folder with the design/audit reports. |
 | **`README.md`** | This file — the index of what's what. |
@@ -86,6 +87,9 @@ All of the above happen **peer-to-peer**, with no central replanning.
 
 - Firmware compiles for `esp8266:esp8266` (NodeMCU 1.0) and has been flashed and
   run on real hardware (`ROBOT_ID=1`); GNN inference ≈ 295 µs per decision.
+- The web dashboard streams its simulation to the OLED node over Web Serial
+  (`npm run dev` in `warehouse-swarm/`, then **Connect ESP**); the node renders
+  it on the WEB/WROB pages while still listening to the ESP-NOW fleet.
 - Shipped `tiny_gnn_weights.h` is a GNN-inspired **bootstrap** (not trained). Use
   `tools/train_gnn.py` + `tools/export_weights.py` to drop in a trained model, then
   verify Python↔board parity before claiming a deployed trained GNN.

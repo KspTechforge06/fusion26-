@@ -3,6 +3,7 @@ import { Renderer, STATE_COLOR, type ViewOptions } from "./render/renderer.js";
 import { isFree } from "./core/grid.js";
 import { createWorld } from "./core/warehouse.js";
 import type { World } from "./core/world.js";
+import { EspLink, serialSupported } from "./link/espLink.js";
 
 /** DOM lookup that fails loudly rather than dereferencing null. */
 function el<T extends HTMLElement>(id: string): T {
@@ -34,6 +35,10 @@ const autoFaultLabel = el<HTMLSpanElement>("autoFaultLabel");
 const showTrails = el<HTMLInputElement>("showTrails");
 const showHeatmap = el<HTMLInputElement>("showHeatmap");
 const showBattery = el<HTMLInputElement>("showBattery");
+
+const espConnectBtn = el<HTMLButtonElement>("espConnect");
+const espDisconnectBtn = el<HTMLButtonElement>("espDisconnect");
+const espStatusEl = el<HTMLParagraphElement>("espStatus");
 
 const statsEl = el<HTMLDListElement>("stats");
 const causesEl = el<HTMLDListElement>("causes");
@@ -319,10 +324,26 @@ function frame(now: number): void {
   updateLog();
   updateTooltip();
 
+  if (state.world) espLink.maybeSend(state.world, now);
+
   requestAnimationFrame(frame);
 }
 
 // ------------------------------------------------------------------- wiring
+
+const espLink = new EspLink((msg, ok) => {
+  espStatusEl.textContent = msg;
+  espStatusEl.style.color = ok ? "#22c55e" : "#f87171";
+});
+espConnectBtn.addEventListener("click", () => {
+  void espLink.connect();
+});
+espDisconnectBtn.addEventListener("click", () => {
+  void espLink.disconnect();
+});
+if (!serialSupported()) {
+  espStatusEl.textContent = "Web Serial unavailable — use Chrome/Edge on localhost";
+}
 
 restartBtn.addEventListener("click", () => {
   restart();
