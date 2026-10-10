@@ -21,10 +21,10 @@ export const STATE_COLOR: Record<AgentState, string> = {
 };
 
 const COLORS = {
-  floor: "#111827",
-  floorAlt: "#0f172a",
-  obstacle: "#334155",
-  obstacleEdge: "#475569",
+  floor: "#171918",
+  floorAlt: "#242725",
+  obstacle: "#5D8D5C",
+  obstacleEdge: "#8A9580",
   dock: "#2563eb",
   packing: "#059669",
   charger: "#eab308",
@@ -107,11 +107,11 @@ export class Renderer {
     const h = this.canvas.clientHeight;
 
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#020617";
+    ctx.fillStyle = "#171918";
     ctx.fillRect(0, 0, w, h);
 
-    if (options.showHeatmap) this.drawHeatmap(world);
     this.drawFloor();
+    if (options.showHeatmap) this.drawHeatmap(world);
     if (options.showTrails) this.drawTrails(world);
     this.drawFacilities(world);
     this.drawRobots(world, options);
@@ -150,13 +150,13 @@ export class Renderer {
         const value = world.congestion[this.codec.cell(x, y)];
         if (value <= 0) continue;
 
-        // Cool blue for light traffic, hot red for congestion.
+        // Warm amber-orange-red for congestion (visible on charcoal/sage background).
         const t = Math.min(1, value / peak);
-        const r = Math.round(37 + t * 218);
-        const g = Math.round(99 - t * 73);
-        const b = Math.round(235 - t * 168);
+        const r = Math.round(220 + t * 35);   // amber -> bright warm
+        const g = Math.round(140 - t * 90);   // amber -> deeper orange
+        const b = Math.round(20 - t * 20);    // low -> red-leaning
 
-        ctx.fillStyle = `rgba(${r},${g},${b},${0.16 + t * 0.42})`;
+        ctx.fillStyle = `rgba(${r},${g},${b},${0.25 + t * 0.55})`;
         ctx.fillRect(this.originX + x * cell, this.originY + y * cell, cell, cell);
       }
     }

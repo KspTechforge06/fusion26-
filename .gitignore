@@ -2,4 +2,8 @@ node_modules/
 dist/
 benchmarks/
 results/
+*.lognode_modules/
+dist/
+.env
+.env.*
 *.log
